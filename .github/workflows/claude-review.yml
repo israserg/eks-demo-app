@@ -1,0 +1,82 @@
+name: Claude code review
+
+# Reviews every pull request with Claude and posts the result as PR comments.
+# Needs one repo secret: CLAUDE_CODE_OAUTH_TOKEN (from `claude setup-token`, Pro/Max subscription) (Settings > Secrets and variables > Actions).
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+# A new push to the PR cancels the review of the previous push, so you pay for one review, not many.
+concurrency:
+  group: claude-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    # Skip drafts and PRs from forks (forks do not get secrets, and their code is untrusted).
+    if: >-
+      github.event.pull_request.draft == false &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    # Same ARC runner scale set as the build workflow (Terraform: eks-arc/arc-app.tf).
+    runs-on: arc-app
+    timeout-minutes: 15
+    # Least privilege: read the code, write PR comments. Nothing else.
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write # PR-level (non-inline) comments use the issues API
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      # The stock ARC runner image does not include the GitHub CLI, which Claude uses to read the
+      # diff. Install it into the job's own workspace, no root needed. Skipped if already present.
+      - name: Ensure GitHub CLI
+        run: |
+          if command -v gh >/dev/null; then gh --version | head -1; exit 0; fi
+          GH_VERSION=2.62.0
+          case "$(uname -m)" in
+            x86_64)  ARCH=amd64 ;;
+            aarch64) ARCH=arm64 ;;
+            *) echo "Unsupported architecture $(uname -m)"; exit 1 ;;
+          esac
+          mkdir -p "$RUNNER_TEMP/gh"
+          curl -fsSL "https://github.com/cli/cli/releases/download/v${GH_VERSION}/gh_${GH_VERSION}_linux_${ARCH}.tar.gz" \
+            | tar -xz -C "$RUNNER_TEMP/gh" --strip-components=1
+          echo "$RUNNER_TEMP/gh/bin" >> "$GITHUB_PATH"
+
+      - name: Review pull request with Claude
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # The workflow's own short-lived token (limited by the permissions block above).
+          # With this set, no GitHub App needs to be installed.
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          prompt: |
+            REPO: ${{ github.repository }}
+            PR NUMBER: ${{ github.event.pull_request.number }}
+
+            Review this pull request. Get the diff with `gh pr diff` and the description with `gh pr view`.
+
+            This repo packages a demo nginx app: a Dockerfile (app/), a Helm chart (chart/) and a
+            GitHub Actions build workflow that pushes to Amazon ECR. Focus on:
+            - Correctness: wrong ports, selectors or values, broken templates, changes that would
+              make the deployed pod crash or the Service unreachable.
+            - Security: hardcoded secrets or passwords, privileged containers, running as root
+              without need, unpinned or `latest` base images, overly broad workflow permissions.
+            - Reliability: missing or unrealistic resource requests and limits, missing probes,
+              a replica count that breaks availability.
+            - Maintainability: only if it matters. Do not nitpick style.
+
+            Rules:
+            - Post specific problems as inline comments on the exact line, using the inline comment tool.
+            - Then post ONE short summary comment with `gh pr comment`: a verdict
+              (looks good / needs changes) and the list of problems by severity.
+            - If the change is good, say so briefly. Do not invent problems to look useful.
+            - Only comment on lines changed in this PR. Do not edit any files.
+          claude_args: |
+            --max-turns 15
+            --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*)"
