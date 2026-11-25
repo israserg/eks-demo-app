@@ -78,3 +78,23 @@ jobs:
           helm template demo "demo-${CHART_VERSION}.tgz" | grep "image:"
           helm push "demo-${CHART_VERSION}.tgz" "oci://$REGISTRY/$CHART_REGISTRY_PATH"
           echo "Pushed chart $REGISTRY/$CHART_REGISTRY_PATH/demo:$CHART_VERSION (image $IMAGE_VERSION)"
+
+      # Shown on the workflow run page. Runs only if every step above succeeded,
+      # so it never lists a version that was not actually pushed.
+      - name: Summary of created versions
+        env:
+          REGISTRY: ${{ steps.ecr-login.outputs.registry }}
+        run: |
+          {
+            echo "## Published versions"
+            echo
+            echo "| Artifact | Version | Location |"
+            echo "|---|---|---|"
+            echo "| Docker image | \`$IMAGE_VERSION\` | \`$REGISTRY/$IMAGE_REPOSITORY:$IMAGE_VERSION\` |"
+            echo "| Helm chart | \`$CHART_VERSION\` (appVersion \`$IMAGE_VERSION\`) | \`oci://$REGISTRY/$CHART_REGISTRY_PATH/demo:$CHART_VERSION\` |"
+            echo
+            echo "Commit: \`${GITHUB_SHA::7}\`, run #$GITHUB_RUN_NUMBER"
+            echo
+            echo "**To deploy:** in the eks-gitops repo set \`image.tag: $IMAGE_VERSION\` in \`root/demo.yaml\`"
+            echo "(and copy \`chart/\` into \`apps/demo/chart/\` if the chart changed)."
+          } >> "$GITHUB_STEP_SUMMARY"
