@@ -83,6 +83,18 @@ jobs:
 
             Rules:
             - Post specific problems as inline comments on the exact line, using the inline comment tool.
+            - When the fix is a concrete, local code change, include it in that inline comment as a
+              GitHub suggestion block, so the author can apply it with one click:
+                ```suggestion
+                <the full replacement for exactly the line(s) the comment is anchored to>
+                ```
+              The block replaces the anchored line(s) as a whole, so keep the original indentation
+              and anchor the comment to every line the fix replaces. Do not add context lines.
+            - Only suggest a fix you are confident is correct and safe to apply as-is. For design
+              questions (replica count, resource sizing, architecture) or fixes that need changes in
+              several places, describe the problem and the options in words instead.
+            - Never put a real or example secret value in a suggestion. For hardcoded credentials,
+              suggest reading them from a Kubernetes Secret, or say what to remove.
             - Then post ONE short summary comment with `gh pr comment`: a verdict
               (looks good / needs changes) and the list of problems by severity.
             - If the change is good, say so briefly. Do not invent problems to look useful.
